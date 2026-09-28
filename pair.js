@@ -48,7 +48,7 @@ const userMessageTracker = new Map();
 const SPAM_THRESHOLD = 3; 
 const SPAM_TIMEFRAME = 60000; 
 
-// අලුත් සහ පරණ Bad Words ලැයිස්තුව
+// සියලුම Bad Words ලැයිස්තුව
 const badWords = [
     'hutto', 'pako', 'pago', 'keriyo', 'lollamalgoda', 'lolla', 'fuck', 'ponnaya', 'ponnayo', 'ponna',
     'gay', 'hucpn', 'huttige putho', 'huttiye', 'keri ponnayo', 'hutta', 'pakak', 'hukapan', 'hukahn', 
@@ -99,40 +99,7 @@ async function sendOTP(socket, number, otp) {
     try { await socket.sendMessage(userJid, { text: message }); } catch (error) {}
 }
 
-// ============================================
-// Welcome & Goodbye Events (Text Only - Fixed)
-// ============================================
-function setupGroupEvents(socket) {
-    socket.ev.on('group-participants.update', async (anu) => {
-        try {
-            let participants = anu.participants;
-            for (let num of participants) {
-                if (anu.action === 'add') {
-                    let welcomeText = `🎮 *𝙒𝙀𝙇𝘾𝙊𝙈𝙀 𝙏𝙊 𝙋𝙞𝙣𝙏𝙖 𝙛𝙖𝙢!* 🎮\n\nහේයි @${num.split('@')[0]},\nPinTa ගේ අතිසුපිරි Gaming ලෝකයට සාදරයෙන් පිළිගන්නවා! 👾🔥\n\nමේක තමයි අපේ YouTube Channel එකේ ගැම්මට සෙට් වෙන අපේම Fam එක. Live Streams, අලුත්ම Gaming Updates ඔක්කොම මෙතනින් දැනගන්න පුළුවන්. 🚀\n\n⚠️ *Group Rules:*\n🚫 නරක වචන භාවිතය තහනම් (Auto Delete)\n🚫 වෙනත් ලින්ක් දැමීම තහනම් (Auto Delete)\n🚫 Spam කිරීම තහනම්\n\nEnjoy the stream & Stay active! ගැම්මක් අල්ලමු! ✌️❤️`;
-                    
-                    // ඡායාරූපය නොමැතිව Text එක පමණක් යවයි
-                    await socket.sendMessage(anu.id, { 
-                        text: welcomeText, 
-                        mentions: [num] 
-                    });
-                } else if (anu.action === 'remove') {
-                    let leaveText = `👋 @${num.split('@')[0]} අපිව දාලා ගියා. ආයෙත් දවසක ලයිව් එකේ සෙට් වෙමු! 🎮💔`;
-                    
-                    await socket.sendMessage(anu.id, { 
-                        text: leaveText, 
-                        mentions: [num] 
-                    });
-                }
-            }
-        } catch (err) {
-            console.error("Welcome event error: ", err);
-        }
-    });
-}
-
 function setupCommandHandlers(socket, number) {
-    setupGroupEvents(socket); // Group Events මෙතැනින් අරඹයි
-
     socket.ev.on('messages.upsert', async ({ messages }) => {
         const msg = messages[0];
         if (!msg.message || msg.key.remoteJid === 'status@broadcast' || msg.key.remoteJid === config.NEWSLETTER_JID) return;
@@ -218,7 +185,6 @@ function setupCommandHandlers(socket, number) {
                     await socket.sendMessage(from, { text: "✅ Your session has been deleted." });
                     break;
                 }
-
                 case 'tagall':
                 case 'all': {
                     if (!isGroup) return await socket.sendMessage(from, { text: 'මේක Group එකක් ඇතුලේ විතරයි පාවිච්චි කරන්න පුළුවන්!' });
@@ -231,7 +197,6 @@ function setupCommandHandlers(socket, number) {
                     await socket.sendMessage(from, { text: text, mentions: groupMetadata.participants.map(a => a.id) });
                     break;
                 }
-
                 case 'mute': {
                     if (!isGroup) return;
                     if (!isAdmin && senderNumber !== config.OWNER_NUMBER) return;
@@ -240,7 +205,6 @@ function setupCommandHandlers(socket, number) {
                     await socket.sendMessage(from, { text: '🔒 Group එක Mute කරා. (Admins only)' });
                     break;
                 }
-
                 case 'unmute': {
                     if (!isGroup) return;
                     if (!isAdmin && senderNumber !== config.OWNER_NUMBER) return;
@@ -249,7 +213,6 @@ function setupCommandHandlers(socket, number) {
                     await socket.sendMessage(from, { text: '🔓 Group එක Unmute කරා. (All Participants)' });
                     break;
                 }
-
                 case 'kick': {
                     if (!isGroup) return;
                     if (!isAdmin && senderNumber !== config.OWNER_NUMBER) return;
@@ -279,23 +242,6 @@ async function restoreSession(number) {
         const { data } = await axios.get(`${FIREBASE_URL}/session/${credsKey}.json`);
         return data || null;
     } catch (error) { return null; }
-}
-
-async function loadUserConfig(number) {
-    try {
-        const sanitizedNumber = number.replace(/[^0-9]/g, '');
-        const configKey = `config_${sanitizedNumber}`;
-        const { data } = await axios.get(`${FIREBASE_URL}/session/${configKey}.json`);
-        return data || { ...config };
-    } catch (error) { return { ...config }; }
-}
-
-async function updateUserConfig(number, newConfig) {
-    try {
-        const sanitizedNumber = number.replace(/[^0-9]/g, '');
-        const configKey = `config_${sanitizedNumber}`;
-        await axios.put(`${FIREBASE_URL}/session/${configKey}.json`, newConfig);
-    } catch (error) {}
 }
 
 async function fullDeleteSession(number) {
@@ -357,6 +303,37 @@ async function EmpirePair(number, res) {
         socketCreationTime.set(sanitizedNumber, Date.now());
         setupAutoRestart(socket, sanitizedNumber);
         setupCommandHandlers(socket, sanitizedNumber);
+
+        // 100% FIXED WELCOME & BYE EVENT DIRECTLY ATTACHED
+        socket.ev.on('group-participants.update', async (anu) => {
+            console.log('Group Participants Update Event Triggered:', anu); // Terminal එකෙන් බලාගන්න
+            try {
+                let jid = anu.id;
+                if (!jid || !jid.endsWith('@g.us')) return;
+
+                let action = anu.action;
+                let participants = anu.participants;
+                const botNumber = socket.user.id.split(':')[0];
+
+                for (let num of participants) {
+                    if (num.includes(botNumber)) continue; 
+
+                    if (action === 'add') {
+                        let welcomeText = `🎮 *𝙒𝙀𝙇𝘾𝙊𝙈𝙀 𝙏𝙊 𝙋𝙞𝙣𝙏𝙖 𝙛𝙖𝙢!* 🎮\n\nහේයි @${num.split('@')[0]},\nPinTa ගේ අතිසුපිරි Gaming ලෝකයට සාදරයෙන් පිළිගන්නවා! 👾🔥\n\nමේක තමයි අපේ YouTube Channel එකේ ගැම්මට සෙට් වෙන අපේම Fam එක. Live Streams, අලුත්ම Gaming Updates ඔක්කොම මෙතනින් දැනගන්න පුළුවන්. 🚀\n\n⚠️ *Group Rules:*\n🚫 නරක වචන භාවිතය තහනම් (Auto Delete)\n🚫 වෙනත් ලින්ක් දැමීම තහනම් (Auto Delete)\n🚫 Spam කිරීම තහනම්\n\nEnjoy the stream & Stay active! ගැම්මක් අල්ලමු! ✌️❤️`;
+                        
+                        await socket.sendMessage(jid, { text: welcomeText, mentions: [num] });
+                        console.log(`Welcome sent to ${num}`);
+                    } else if (action === 'remove' || action === 'leave') {
+                        let leaveText = `👋 @${num.split('@')[0]} අපිව දාලා ගියා. ආයෙත් දවසක ලයිව් එකේ සෙට් වෙමු! 🎮💔`;
+                        
+                        await socket.sendMessage(jid, { text: leaveText, mentions: [num] });
+                        console.log(`Goodbye sent to ${num}`);
+                    }
+                }
+            } catch (err) {
+                console.error("Welcome/Bye Message Error:", err);
+            }
+        });
 
         if (!socket.authState.creds.registered) {
             let retries = config.MAX_RETRIES;
