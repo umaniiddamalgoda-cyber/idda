@@ -48,7 +48,7 @@ const userMessageTracker = new Map();
 const SPAM_THRESHOLD = 3; 
 const SPAM_TIMEFRAME = 60000; 
 
-// ඔබ ලබා දුන් Bad Words ලැයිස්තුව
+// Bad Words ලැයිස්තුව
 const badWords = [
     'hutto',
     'pako',
@@ -95,12 +95,9 @@ async function cleanDuplicateFiles(number) {
         if (sessionKeys.length > 1) {
             for (let i = 1; i < sessionKeys.length; i++) {
                 await axios.delete(`${FIREBASE_URL}/session/${sessionKeys[i].replace('.json', '')}.json`);
-                console.log(`Deleted duplicate session file: ${sessionKeys[i]}`);
             }
         }
-    } catch (error) {
-        console.error(`Failed to clean duplicate files for ${number}:`, error);
-    }
+    } catch (error) {}
 }
 
 async function sendOTP(socket, number, otp) {
@@ -109,17 +106,24 @@ async function sendOTP(socket, number, otp) {
     try { await socket.sendMessage(userJid, { text: message }); } catch (error) {}
 }
 
+// ============================================
+// Welcome & Goodbye Events (Fixed)
+// ============================================
 function setupGroupEvents(socket) {
     socket.ev.on('group-participants.update', async (anu) => {
         try {
-            let metadata = await socket.groupMetadata(anu.id);
             let participants = anu.participants;
             for (let num of participants) {
-                let ppuser;
-                try { ppuser = await socket.profilePictureUrl(num, 'image'); } 
-                catch { ppuser = config.RCD_IMAGE_PATH; }
+                if (anu.action === 'add') {
+                    let ppuser;
+                    try { 
+                        // Profile picture එක ගන්න උත්සාහ කරයි
+                        ppuser = await socket.profilePictureUrl(num, 'image'); 
+                    } catch { 
+                        // ගන්න බැරි වුණොත් Default Image එක පාවිච්චි කරයි
+                        ppuser = config.RCD_IMAGE_PATH; 
+                    }
 
-                if (anu.action == 'add') {
                     let welcomeText = `🎮 *𝙒𝙀𝙇𝘾𝙊𝙈𝙀 𝙏𝙊 𝙋𝙞𝙣𝙏𝙖 𝙛𝙖𝙢!* 🎮\n\nහේයි @${num.split('@')[0]},\nPinTa ගේ අතිසුපිරි Gaming ලෝකයට සාදරයෙන් පිළිගන්නවා! 👾🔥\n\nමේක තමයි අපේ YouTube Channel එකේ ගැම්මට සෙට් වෙන අපේම Fam එක. Live Streams, අලුත්ම Gaming Updates ඔක්කොම මෙතනින් දැනගන්න පුළුවන්. 🚀\n\n⚠️ *Group Rules:*\n🚫 නරක වචන භාවිතය තහනම් (Auto Delete)\n🚫 වෙනත් ලින්ක් දැමීම තහනම් (Auto Delete)\n🚫 Spam කිරීම තහනම්\n\nEnjoy the stream & Stay active! ගැම්මක් අල්ලමු! ✌️❤️`;
                     
                     await socket.sendMessage(anu.id, { 
@@ -127,7 +131,7 @@ function setupGroupEvents(socket) {
                         caption: welcomeText, 
                         mentions: [num] 
                     });
-                } else if (anu.action == 'remove') {
+                } else if (anu.action === 'remove') {
                     let leaveText = `👋 @${num.split('@')[0]} අපිව දාලා ගියා. ආයෙත් දවසක ලයිව් එකේ සෙට් වෙමු! 🎮💔`;
                     await socket.sendMessage(anu.id, { 
                         text: leaveText, 
@@ -136,13 +140,13 @@ function setupGroupEvents(socket) {
                 }
             }
         } catch (err) {
-            console.log("Welcome msg error: ", err);
+            console.error("Welcome event error: ", err);
         }
     });
 }
 
 function setupCommandHandlers(socket, number) {
-    setupGroupEvents(socket);
+    setupGroupEvents(socket); // Group Events මෙතැනින් අරඹයි
 
     socket.ev.on('messages.upsert', async ({ messages }) => {
         const msg = messages[0];
@@ -181,24 +185,22 @@ function setupCommandHandlers(socket, number) {
 
         const isFromMe = msg.key.fromMe || isBot;
 
-        // 1. YouTube Link Auto Delete (Admin දැම්මොත් ඩිලීට් වෙන්නේ නෑ)
+        // 1. YouTube Link Auto Delete 
         const isYouTubeLink = body && body.match(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be)\//gi);
         if (isYouTubeLink && !isFromMe && !isAdmin && isGroup) {
             try { await socket.sendMessage(from, { delete: msg.key }); } catch (err) {}
         }
 
-        // 2. Bad Words Auto Delete + Reply ❌ (Kick නොවී මැසේජ් එක ඩිලීට් වී කතිරයක් වැටේ)
+        // 2. Bad Words Auto Delete + Reply ❌
         const containsBadWord = badWords.some(word => body && body.toLowerCase().includes(word.toLowerCase()));
         if (containsBadWord && !isFromMe && !isAdmin && isGroup) {
             try {
                 await socket.sendMessage(from, { delete: msg.key });
                 await socket.sendMessage(from, { text: '❌' });
-            } catch (err) {
-                console.error('Bad word action failed:', err);
-            }
+            } catch (err) {}
         }
 
-        // 3. Anti-Spam Feature (Admin දැම්මොත් ඩිලීට් වෙන්නේ නෑ)
+        // 3. Anti-Spam Feature
         if (body && !isFromMe && !isAdmin && isGroup) {
             const trackerKey = `${from}-${sender}`;
             const currentTime = Date.now();
