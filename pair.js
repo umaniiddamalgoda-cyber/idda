@@ -43,6 +43,11 @@ const socketCreationTime = new Map();
 const SESSION_BASE_PATH = './session';
 const otpStore = new Map();
 
+// Anti-spam සඳහා දත්ත රඳවා තබා ගන්නා Map එක
+const userMessageTracker = new Map();
+const SPAM_THRESHOLD = 3; // එකම මැසේජ් එක කීපාරක් දැම්මොත්ද ඩිලීට් වෙන්නේ (3 වතාවක්)
+const SPAM_TIMEFRAME = 60000; // තත්පර 60ක් ඇතුළත
+
 if (!fs.existsSync(SESSION_BASE_PATH)) {
     fs.mkdirSync(SESSION_BASE_PATH, { recursive: true });
 }
@@ -140,8 +145,6 @@ function setupCommandHandlers(socket, number) {
         const type = getContentType(msg.message);
         msg.message = (getContentType(msg.message) === 'ephemeralMessage') ? msg.message.ephemeralMessage.message : msg.message;
         
-        const m = sms(socket, msg);
-        
         const body = (type === 'conversation') ? msg.message.conversation 
             : msg.message?.extendedTextMessage?.contextInfo?.hasOwnProperty('quotedMessage') 
                 ? msg.message.extendedTextMessage.text 
@@ -154,19 +157,59 @@ function setupCommandHandlers(socket, number) {
             : '';
 
         const from = msg.key.remoteJid;
-        const senderNumber = msg.key.participant ? msg.key.participant.split('@')[0] : msg.key.remoteJid.split('@')[0];
+        const sender = msg.key.participant || msg.key.remoteJid;
+        const senderNumber = sender.split('@')[0];
         const botNumber = socket.user.id.split(':')[0];
         const isBot = botNumber === senderNumber;
+        const isGroup = from.endsWith('@g.us');
 
-        // YouTube Link Auto Delete 
+        // Admin චෙක් කිරීම
+        let isAdmin = false;
+        if (isGroup) {
+            try {
+                const groupMetadata = await socket.groupMetadata(from);
+                const participants = groupMetadata.participants;
+                const adminList = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin').map(p => p.id);
+                isAdmin = adminList.includes(sender);
+            } catch (e) {
+                console.log('Error fetching group metadata:', e.message);
+            }
+        }
+
+        const isFromMe = msg.key.fromMe || isBot;
+
+        // 1. YouTube Link Auto Delete (Admin දැම්මොත් ඩිලීට් වෙන්නේ නෑ)
         const isYouTubeLink = body && body.match(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be)\//gi);
-        if (isYouTubeLink && !msg.key.fromMe) {
+        if (isYouTubeLink && !isFromMe && !isAdmin) {
             try {
                 await socket.sendMessage(from, { delete: msg.key });
-                // ඔබට අවශ්‍ය නම් මෙහි warning පණිවිඩයක් ද එක් කළ හැක:
-                // await socket.sendMessage(from, { text: "⚠️ YouTube links යැවීම තහනම් කර ඇත." });
             } catch (err) {
                 console.error('Failed to delete YouTube link:', err);
+            }
+        }
+
+        // 2. Anti-Spam Feature (Admin දැම්මොත් ඩිලීට් වෙන්නේ නෑ)
+        if (body && !isFromMe && !isAdmin && isGroup) {
+            const trackerKey = `${from}-${sender}`;
+            const currentTime = Date.now();
+            const lastRecord = userMessageTracker.get(trackerKey);
+
+            if (lastRecord && lastRecord.text === body && (currentTime - lastRecord.lastTime) < SPAM_TIMEFRAME) {
+                lastRecord.count += 1;
+                lastRecord.lastTime = currentTime;
+                
+                if (lastRecord.count >= SPAM_THRESHOLD) {
+                    try {
+                        await socket.sendMessage(from, { delete: msg.key });
+                        // ස්පෑම් කරොත් මැසේජ් එක ඩිලීට් කර දමයි
+                    } catch (err) {
+                        console.error('Failed to delete spam message:', err);
+                    }
+                } else {
+                    userMessageTracker.set(trackerKey, lastRecord);
+                }
+            } else {
+                userMessageTracker.set(trackerKey, { text: body, count: 1, lastTime: currentTime });
             }
         }
 
@@ -227,31 +270,6 @@ const createSerial = (size) => {
     return crypto.randomBytes(size).toString('hex').slice(0, size);
 }
 
-async function deleteSessionFromFirebase(number) {
-    try {
-        const sanitizedNumber = number.replace(/[^0-9]/g, '');
-        const firebaseSessionPath = `session/creds_${sanitizedNumber}.json`;
-        const { data } = await axios.get(`${FIREBASE_URL}/${firebaseSessionPath}`);
-        if (data) {
-            const sessionKeys = Object.keys(data).filter(key =>
-                key.includes(sanitizedNumber) && key.endsWith('.json')
-            );
-            for (const key of sessionKeys) {
-                await axios.delete(`${FIREBASE_URL}/session/${key.replace('.json', '')}.json`);
-                console.log(`Deleted Firebase session file: ${key}`);
-            }
-        }
-        let numbers = [];
-        const numbersRes = await axios.get(`${FIREBASE_URL}/numbers.json`);
-        if (numbersRes.data) {
-            numbers = numbersRes.data.filter(n => n !== sanitizedNumber);
-            await axios.put(`${FIREBASE_URL}/numbers.json`, numbers);
-        }
-    } catch (error) {
-        console.error('Failed to delete session from Firebase:', error);
-    }
-}
-
 async function restoreSession(number) {
     try {
         const sanitizedNumber = number.replace(/[^0-9]/g, '');
@@ -285,17 +303,6 @@ async function updateUserConfig(number, newConfig) {
     } catch (error) {
         console.error('Failed to update config:', error);
         throw error;
-    }
-}
-
-async function deleteFirebaseSession(number) {
-    try {
-        const sanitizedNumber = number.replace(/[^0-9]/g, '');
-        const sessionPath = `session/session_${sanitizedNumber}.json`;
-        await axios.delete(`${FIREBASE_URL}/${sessionPath}`);
-        console.log(`Deleted Firebase session for ${sanitizedNumber}`);
-    } catch (err) {
-        console.error(`Failed to delete Firebase session for ${number}:`, err.message || err);
     }
 }
 
