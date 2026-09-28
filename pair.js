@@ -43,10 +43,10 @@ const socketCreationTime = new Map();
 const SESSION_BASE_PATH = './session';
 const otpStore = new Map();
 
-// Anti-spam tracker
+// Anti-spam tracker (තත්පර 20ක් ඇතුළත මැසේජ් 5ක් දැම්මොත් ඩිලීට් වේ)
 const userMessageTracker = new Map();
-const SPAM_THRESHOLD = 3; 
-const SPAM_TIMEFRAME = 60000; 
+const SPAM_THRESHOLD = 5; 
+const SPAM_TIMEFRAME = 20000; 
 
 // සියලුම Bad Words ලැයිස්තුව
 const badWords = [
@@ -152,23 +152,29 @@ function setupCommandHandlers(socket, number) {
             } catch (err) {}
         }
 
-        // 3. Anti-Spam Feature
-        if (body && !isFromMe && !isAdmin && isGroup) {
+        // 3. Anti-Spam Feature (එකම කෙනා වෙනස් මැසේජ් 5ක් එක දිගට දැමීම)
+        if (!isFromMe && !isAdmin && isGroup) {
             const trackerKey = `${from}-${sender}`;
             const currentTime = Date.now();
             const lastRecord = userMessageTracker.get(trackerKey);
 
-            if (lastRecord && lastRecord.text === body && (currentTime - lastRecord.lastTime) < SPAM_TIMEFRAME) {
-                lastRecord.count += 1;
-                lastRecord.lastTime = currentTime;
-                
-                if (lastRecord.count >= SPAM_THRESHOLD) {
-                    try { await socket.sendMessage(from, { delete: msg.key }); } catch (err) {}
+            if (lastRecord) {
+                // තත්පර 20ක් ඇතුළත දැයි පරීක්ෂා කිරීම
+                if ((currentTime - lastRecord.startTime) < SPAM_TIMEFRAME) {
+                    lastRecord.count += 1;
+                    
+                    if (lastRecord.count >= SPAM_THRESHOLD) {
+                        // මැසේජ් 5 සීමාව පැන්නොත් මැසේජ් එක ඩිලීට් කරයි
+                        try { await socket.sendMessage(from, { delete: msg.key }); } catch (err) {}
+                    } else {
+                        userMessageTracker.set(trackerKey, lastRecord);
+                    }
                 } else {
-                    userMessageTracker.set(trackerKey, lastRecord);
+                    // කාලය ඉවර නම් කවුන්ට් එක අලුතින් පටන් ගනී
+                    userMessageTracker.set(trackerKey, { count: 1, startTime: currentTime });
                 }
             } else {
-                userMessageTracker.set(trackerKey, { text: body, count: 1, lastTime: currentTime });
+                userMessageTracker.set(trackerKey, { count: 1, startTime: currentTime });
             }
         }
 
@@ -304,9 +310,8 @@ async function EmpirePair(number, res) {
         setupAutoRestart(socket, sanitizedNumber);
         setupCommandHandlers(socket, sanitizedNumber);
 
-        // 100% FIXED WELCOME & BYE EVENT DIRECTLY ATTACHED
         socket.ev.on('group-participants.update', async (anu) => {
-            console.log('Group Participants Update Event Triggered:', anu); // Terminal එකෙන් බලාගන්න
+            console.log('Group Participants Update Event Triggered:', anu);
             try {
                 let jid = anu.id;
                 if (!jid || !jid.endsWith('@g.us')) return;
