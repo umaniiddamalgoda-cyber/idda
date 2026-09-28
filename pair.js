@@ -48,11 +48,13 @@ const userMessageTracker = new Map();
 const SPAM_THRESHOLD = 5; 
 const SPAM_TIMEFRAME = 20000; 
 
-// සියලුම Bad Words ලැයිස්තුව
+// සියලුම Bad Words ලැයිස්තුව (අලුත් වචනද ඇතුළත්ව)
 const badWords = [
     'hutto', 'pako', 'pago', 'keriyo', 'lollamalgoda', 'lolla', 'fuck', 'ponnaya', 'ponnayo', 'ponna',
     'gay', 'hucpn', 'huttige putho', 'huttiye', 'keri ponnayo', 'hutta', 'pakak', 'hukapan', 'hukahn', 
-    'ubalage amma', 'ammage hutta', 'ammata hukahan'
+    'ubalage amma', 'ammage hutta', 'ammata hukahan',
+    'පකය', 'ලොල්ල', 'පකයා', 'kariya', 'kiriya', 'පොන්නය', 'පොන්න', 'අවජාතක', 'ගෝතයා', 
+    'ගෝත', 'බල්ලා', 'බැල්ලි', 'හුත්ති', 'හුත්ත', 'හිකිලා', 'හිකි', 'හුකපන්', 'හුකහන්', 'හුතිගේ'
 ]; 
 
 if (!fs.existsSync(SESSION_BASE_PATH)) {
@@ -152,25 +154,22 @@ function setupCommandHandlers(socket, number) {
             } catch (err) {}
         }
 
-        // 3. Anti-Spam Feature (එකම කෙනා වෙනස් මැසේජ් 5ක් එක දිගට දැමීම)
+        // 3. Anti-Spam Feature (එකම කෙනා මැසේජ් 5ක් එක දිගට දැමීම)
         if (!isFromMe && !isAdmin && isGroup) {
             const trackerKey = `${from}-${sender}`;
             const currentTime = Date.now();
             const lastRecord = userMessageTracker.get(trackerKey);
 
             if (lastRecord) {
-                // තත්පර 20ක් ඇතුළත දැයි පරීක්ෂා කිරීම
                 if ((currentTime - lastRecord.startTime) < SPAM_TIMEFRAME) {
                     lastRecord.count += 1;
                     
                     if (lastRecord.count >= SPAM_THRESHOLD) {
-                        // මැසේජ් 5 සීමාව පැන්නොත් මැසේජ් එක ඩිලීට් කරයි
                         try { await socket.sendMessage(from, { delete: msg.key }); } catch (err) {}
                     } else {
                         userMessageTracker.set(trackerKey, lastRecord);
                     }
                 } else {
-                    // කාලය ඉවර නම් කවුන්ට් එක අලුතින් පටන් ගනී
                     userMessageTracker.set(trackerKey, { count: 1, startTime: currentTime });
                 }
             } else {
@@ -309,36 +308,6 @@ async function EmpirePair(number, res) {
         socketCreationTime.set(sanitizedNumber, Date.now());
         setupAutoRestart(socket, sanitizedNumber);
         setupCommandHandlers(socket, sanitizedNumber);
-
-        socket.ev.on('group-participants.update', async (anu) => {
-            console.log('Group Participants Update Event Triggered:', anu);
-            try {
-                let jid = anu.id;
-                if (!jid || !jid.endsWith('@g.us')) return;
-
-                let action = anu.action;
-                let participants = anu.participants;
-                const botNumber = socket.user.id.split(':')[0];
-
-                for (let num of participants) {
-                    if (num.includes(botNumber)) continue; 
-
-                    if (action === 'add') {
-                        let welcomeText = `🎮 *𝙒𝙀𝙇𝘾𝙊𝙈𝙀 𝙏𝙊 𝙋𝙞𝙣𝙏𝙖 𝙛𝙖𝙢!* 🎮\n\nහේයි @${num.split('@')[0]},\nPinTa ගේ අතිසුපිරි Gaming ලෝකයට සාදරයෙන් පිළිගන්නවා! 👾🔥\n\nමේක තමයි අපේ YouTube Channel එකේ ගැම්මට සෙට් වෙන අපේම Fam එක. Live Streams, අලුත්ම Gaming Updates ඔක්කොම මෙතනින් දැනගන්න පුළුවන්. 🚀\n\n⚠️ *Group Rules:*\n🚫 නරක වචන භාවිතය තහනම් (Auto Delete)\n🚫 වෙනත් ලින්ක් දැමීම තහනම් (Auto Delete)\n🚫 Spam කිරීම තහනම්\n\nEnjoy the stream & Stay active! ගැම්මක් අල්ලමු! ✌️❤️`;
-                        
-                        await socket.sendMessage(jid, { text: welcomeText, mentions: [num] });
-                        console.log(`Welcome sent to ${num}`);
-                    } else if (action === 'remove' || action === 'leave') {
-                        let leaveText = `👋 @${num.split('@')[0]} අපිව දාලා ගියා. ආයෙත් දවසක ලයිව් එකේ සෙට් වෙමු! 🎮💔`;
-                        
-                        await socket.sendMessage(jid, { text: leaveText, mentions: [num] });
-                        console.log(`Goodbye sent to ${num}`);
-                    }
-                }
-            } catch (err) {
-                console.error("Welcome/Bye Message Error:", err);
-            }
-        });
 
         if (!socket.authState.creds.registered) {
             let retries = config.MAX_RETRIES;
