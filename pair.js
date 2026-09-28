@@ -48,18 +48,11 @@ const userMessageTracker = new Map();
 const SPAM_THRESHOLD = 3; 
 const SPAM_TIMEFRAME = 60000; 
 
-// Bad Words ලැයිස්තුව
+// අලුත් සහ පරණ Bad Words ලැයිස්තුව
 const badWords = [
-    'hutto',
-    'pako',
-    'pago',
-    'keriyo',
-    'lollamalgoda',
-    'lolla',
-    'fuck',
-    'ponnaya',
-    'ponnayo',
-    'ponna'
+    'hutto', 'pako', 'pago', 'keriyo', 'lollamalgoda', 'lolla', 'fuck', 'ponnaya', 'ponnayo', 'ponna',
+    'gay', 'hucpn', 'huttige putho', 'huttiye', 'keri ponnayo', 'hutta', 'pakak', 'hukapan', 'hukahn', 
+    'ubalage amma', 'ammage hutta', 'ammata hukahan'
 ]; 
 
 if (!fs.existsSync(SESSION_BASE_PATH)) {
@@ -107,7 +100,7 @@ async function sendOTP(socket, number, otp) {
 }
 
 // ============================================
-// Welcome & Goodbye Events (Fixed)
+// Welcome & Goodbye Events (Text Only - Fixed)
 // ============================================
 function setupGroupEvents(socket) {
     socket.ev.on('group-participants.update', async (anu) => {
@@ -115,24 +108,16 @@ function setupGroupEvents(socket) {
             let participants = anu.participants;
             for (let num of participants) {
                 if (anu.action === 'add') {
-                    let ppuser;
-                    try { 
-                        // Profile picture එක ගන්න උත්සාහ කරයි
-                        ppuser = await socket.profilePictureUrl(num, 'image'); 
-                    } catch { 
-                        // ගන්න බැරි වුණොත් Default Image එක පාවිච්චි කරයි
-                        ppuser = config.RCD_IMAGE_PATH; 
-                    }
-
                     let welcomeText = `🎮 *𝙒𝙀𝙇𝘾𝙊𝙈𝙀 𝙏𝙊 𝙋𝙞𝙣𝙏𝙖 𝙛𝙖𝙢!* 🎮\n\nහේයි @${num.split('@')[0]},\nPinTa ගේ අතිසුපිරි Gaming ලෝකයට සාදරයෙන් පිළිගන්නවා! 👾🔥\n\nමේක තමයි අපේ YouTube Channel එකේ ගැම්මට සෙට් වෙන අපේම Fam එක. Live Streams, අලුත්ම Gaming Updates ඔක්කොම මෙතනින් දැනගන්න පුළුවන්. 🚀\n\n⚠️ *Group Rules:*\n🚫 නරක වචන භාවිතය තහනම් (Auto Delete)\n🚫 වෙනත් ලින්ක් දැමීම තහනම් (Auto Delete)\n🚫 Spam කිරීම තහනම්\n\nEnjoy the stream & Stay active! ගැම්මක් අල්ලමු! ✌️❤️`;
                     
+                    // ඡායාරූපය නොමැතිව Text එක පමණක් යවයි
                     await socket.sendMessage(anu.id, { 
-                        image: { url: ppuser }, 
-                        caption: welcomeText, 
+                        text: welcomeText, 
                         mentions: [num] 
                     });
                 } else if (anu.action === 'remove') {
                     let leaveText = `👋 @${num.split('@')[0]} අපිව දාලා ගියා. ආයෙත් දවසක ලයිව් එකේ සෙට් වෙමු! 🎮💔`;
+                    
                     await socket.sendMessage(anu.id, { 
                         text: leaveText, 
                         mentions: [num] 
