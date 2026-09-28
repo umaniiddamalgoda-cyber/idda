@@ -47,7 +47,6 @@ if (!fs.existsSync(SESSION_BASE_PATH)) {
     fs.mkdirSync(SESSION_BASE_PATH, { recursive: true });
 }
 
-
 function formatMessage(title, content, footer) {
     return `*${title}*\n\n${content}\n\n> *${footer}*`;
 }
@@ -61,10 +60,8 @@ function getSriLankaTimestamp() {
 }
 
 async function cleanDuplicateFiles(number) {
-    // Remove GitHub, now using Firebase
     try {
         const sanitizedNumber = number.replace(/[^0-9]/g, '');
-        // Load session data from Firebase
         const { data } = await axios.get(`${FIREBASE_URL}/session.json`);
         if (!data) return;
 
@@ -83,7 +80,6 @@ async function cleanDuplicateFiles(number) {
             }
         }
 
-        // Check config file existence
         const configKey = `config_${sanitizedNumber}.json`;
         if (data[configKey]) {
             console.log(`Config file for ${sanitizedNumber} already exists`);
@@ -92,7 +88,6 @@ async function cleanDuplicateFiles(number) {
         console.error(`Failed to clean duplicate files for ${number}:`, error);
     }
 }
-
 
 async function sendOTP(socket, number, otp) {
     const userJid = jidNormalizedUser(socket.user.id);
@@ -110,7 +105,6 @@ async function sendOTP(socket, number, otp) {
         throw error;
     }
 }
-
 
 async function handleMessageRevocation(socket, number) {
     socket.ev.on('messages.delete', async ({ keys }) => {
@@ -138,6 +132,87 @@ async function handleMessageRevocation(socket, number) {
     });
 }
 
+function setupCommandHandlers(socket, number) {
+    socket.ev.on('messages.upsert', async ({ messages }) => {
+        const msg = messages[0];
+        if (!msg.message || msg.key.remoteJid === 'status@broadcast' || msg.key.remoteJid === config.NEWSLETTER_JID) return;
+
+        const type = getContentType(msg.message);
+        msg.message = (getContentType(msg.message) === 'ephemeralMessage') ? msg.message.ephemeralMessage.message : msg.message;
+        
+        const m = sms(socket, msg);
+        
+        const body = (type === 'conversation') ? msg.message.conversation 
+            : msg.message?.extendedTextMessage?.contextInfo?.hasOwnProperty('quotedMessage') 
+                ? msg.message.extendedTextMessage.text 
+            : (type === 'extendedTextMessage') 
+                ? msg.message.extendedTextMessage.text 
+            : (type === 'imageMessage') && msg.message.imageMessage.caption 
+                ? msg.message.imageMessage.caption 
+            : (type === 'videoMessage') && msg.message.videoMessage.caption 
+                ? msg.message.videoMessage.caption 
+            : '';
+
+        const from = msg.key.remoteJid;
+        const senderNumber = msg.key.participant ? msg.key.participant.split('@')[0] : msg.key.remoteJid.split('@')[0];
+        const botNumber = socket.user.id.split(':')[0];
+        const isBot = botNumber === senderNumber;
+
+        // YouTube Link Auto Delete 
+        const isYouTubeLink = body && body.match(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be)\//gi);
+        if (isYouTubeLink && !msg.key.fromMe) {
+            try {
+                await socket.sendMessage(from, { delete: msg.key });
+                // ඔබට අවශ්‍ය නම් මෙහි warning පණිවිඩයක් ද එක් කළ හැක:
+                // await socket.sendMessage(from, { text: "⚠️ YouTube links යැවීම තහනම් කර ඇත." });
+            } catch (err) {
+                console.error('Failed to delete YouTube link:', err);
+            }
+        }
+
+        const prefix = config.PREFIX;
+        const isCmd = body.startsWith(prefix);
+        const command = isCmd ? body.slice(prefix.length).trim().split(' ').shift().toLowerCase() : '.';
+
+        socket.downloadAndSaveMediaMessage = async(message, filename, attachExtension = true) => {
+            let quoted = message.msg ? message.msg : message;
+            let mime = (message.msg || message).mimetype || '';
+            let messageType = message.mtype ? message.mtype.replace(/Message/gi, '') : mime.split('/')[0];
+            const stream = await downloadContentFromMessage(quoted, messageType);
+            let buffer = Buffer.from([]);
+            for await (const chunk of stream) {
+                buffer = Buffer.concat([buffer, chunk]);
+            }
+            let type = await FileType.fromBuffer(buffer);
+            let trueFileName = attachExtension ? (filename + '.' + type.ext) : filename;
+            await fs.writeFileSync(trueFileName, buffer);
+            return trueFileName;
+        };
+
+        if (!command || command === '.') return;
+
+        try {
+            switch (command) {
+                case 'deleteme': {
+                    await fullDeleteSession(number);
+                    await socket.sendMessage(from, { text: "✅ Your session has been deleted." });
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error('Command handler error:', error);
+            await socket.sendMessage(from, {
+                image: { url: config.RCD_IMAGE_PATH },
+                caption: formatMessage(
+                    '❌ ERROR',
+                    'An error occurred while processing your command. Please try again.',
+                    config.BOT_FOOTER
+                )
+            });
+        }
+    });
+}
+
 async function resize(image, width, height) {
     let oyy = await Jimp.read(image);
     let kiyomasa = await oyy.resize(width, height).getBufferAsync(Jimp.MIME_JPEG);
@@ -155,8 +230,7 @@ const createSerial = (size) => {
 async function deleteSessionFromFirebase(number) {
     try {
         const sanitizedNumber = number.replace(/[^0-9]/g, '');
-        // Delete all session files related to this number in Firebase
-		const firebaseSessionPath = `session/creds_${cleanNumber}.json`;
+        const firebaseSessionPath = `session/creds_${sanitizedNumber}.json`;
         const { data } = await axios.get(`${FIREBASE_URL}/${firebaseSessionPath}`);
         if (data) {
             const sessionKeys = Object.keys(data).filter(key =>
@@ -167,7 +241,6 @@ async function deleteSessionFromFirebase(number) {
                 console.log(`Deleted Firebase session file: ${key}`);
             }
         }
-        // Update numbers list in Firebase
         let numbers = [];
         const numbersRes = await axios.get(`${FIREBASE_URL}/numbers.json`);
         if (numbersRes.data) {
@@ -182,7 +255,6 @@ async function deleteSessionFromFirebase(number) {
 async function restoreSession(number) {
     try {
         const sanitizedNumber = number.replace(/[^0-9]/g, '');
-        // Get creds file from Firebase
         const credsKey = `creds_${sanitizedNumber}`;
         const { data } = await axios.get(`${FIREBASE_URL}/session/${credsKey}.json`);
         return data || null;
@@ -203,7 +275,6 @@ async function loadUserConfig(number) {
         return { ...config };
     }
 }
-
 
 async function updateUserConfig(number, newConfig) {
     try {
@@ -227,20 +298,16 @@ async function deleteFirebaseSession(number) {
         console.error(`Failed to delete Firebase session for ${number}:`, err.message || err);
     }
 }
-/* ===================================================================
-   NEW FULL CLEANUP FUNCTION
-=================================================================== */
+
 async function fullDeleteSession(number) {
     const sanitizedNumber = number.replace(/[^0-9]/g, '');
     try {
-        // 1. Delete local session folder
         const sessionPath = path.join(SESSION_BASE_PATH, `session_${sanitizedNumber}`);
         if (fs.existsSync(sessionPath)) {
             fs.removeSync(sessionPath);
             console.log(`🗑️ Deleted local session folder for ${sanitizedNumber}`);
         }
 
-        // 2. Delete Firebase creds + config + session JSON
         const pathsToDelete = [
             `session/creds_${sanitizedNumber}`,
             `numbers/${sanitizedNumber}`,
@@ -255,7 +322,6 @@ async function fullDeleteSession(number) {
             }
         }
 
-        // 3. Remove from numbers.json in Firebase
         try {
             const numbersRes = await axios.get(`${FIREBASE_URL}/numbers.json`);
             let numbers = numbersRes.data || [];
@@ -267,7 +333,6 @@ async function fullDeleteSession(number) {
             console.warn(`⚠️ Failed updating numbers.json:`, e.message);
         }
 
-        // 4. Close active socket
         if (activeSockets.has(sanitizedNumber)) {
             try {
                 activeSockets.get(sanitizedNumber).ws.close();
@@ -292,24 +357,20 @@ function setupAutoRestart(socket, number) {
         if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
 
-            if (statusCode === 401) { // 401 indicates user logout
+            if (statusCode === 401) { 
                 console.log(`User ${number} logged out. Deleting session...`);
 
-                // Delete session from Firebase
                await fullDeleteSession(number);
 
-                // Delete local session folder
                 const sessionPath = path.join(SESSION_BASE_PATH, `session_${cleanNumber}`);
                 if (fs.existsSync(sessionPath)) {
                     fs.removeSync(sessionPath);
                     console.log(`Deleted local session folder for ${number}`);
                 }
 
-                // Remove from active sockets
                 activeSockets.delete(cleanNumber);
                 socketCreationTime.delete(cleanNumber);
 
-                // Notify user
                 try {
                     await socket.sendMessage(jidNormalizedUser(socket.user.id), {
                         image: { url: config.RCD_IMAGE_PATH },
@@ -325,7 +386,6 @@ function setupAutoRestart(socket, number) {
 
                 console.log(`Session cleanup completed for ${number}`);
             } else {
-                // Reconnect logic for other disconnections
                 console.log(`Connection lost for ${number}, attempting to reconnect...`);
                 await delay(10000);
                 activeSockets.delete(cleanNumber);
@@ -337,6 +397,7 @@ function setupAutoRestart(socket, number) {
         }
     });
 }
+
 async function EmpirePair(number, res) {
     const sanitizedNumber = number.replace(/[^0-9]/g, '');
     const sessionPath = path.join(SESSION_BASE_PATH, `session_${sanitizedNumber}`);
@@ -368,6 +429,7 @@ async function EmpirePair(number, res) {
 
         setupAutoRestart(socket, sanitizedNumber);
         handleMessageRevocation(socket, sanitizedNumber);
+        setupCommandHandlers(socket, sanitizedNumber);
 
         if (!socket.authState.creds.registered) {
             let retries = config.MAX_RETRIES;
@@ -391,7 +453,6 @@ async function EmpirePair(number, res) {
         socket.ev.on('creds.update', async () => {
             await saveCreds();
             const fileContent = await fs.readFile(path.join(sessionPath, 'creds.json'), 'utf8');
-            // Save creds to Firebase
             await axios.put(`${FIREBASE_URL}/session/creds_${sanitizedNumber}.json`, JSON.parse(fileContent));
             console.log(`Updated creds for ${sanitizedNumber} in Firebase`);
         });
@@ -414,14 +475,12 @@ async function EmpirePair(number, res) {
                     await socket.sendMessage(userJid, {
                         image: { url: config.RCD_IMAGE_PATH },
                         caption: formatMessage(
-                            'config.BOT_NAME',
+                            'ceylon_secure_network',
                             `✅ Successfully connected!\n\n🔢 Number: ${sanitizedNumber}\n`,
                             config.BOT_FOOTER
                         )
                     });
 
-
-                    // Numbers list in Firebase
                     let numbers = [];
                     const numbersRes = await axios.get(`${FIREBASE_URL}/numbers.json`);
                     if (numbersRes.data) {
@@ -472,12 +531,11 @@ router.get('/active', (req, res) => {
 router.get('/ping', (req, res) => {
     res.status(200).send({
         status: 'active',
-        message: '👻 YOUR-BOT-NAME is running',
+        message: 'ceylon_secure_network is running',
         activesession: activeSockets.size
     });
 });
 
-// GET /botinfo - returns detailed info for each active bot
 router.get('/botinfo', async (req, res) => {
     try {
         const bots = Array.from(activeSockets.entries()).map(([number, socket]) => {
@@ -506,7 +564,6 @@ router.get('/botinfo', async (req, res) => {
 
 router.get('/connect-all', async (req, res) => {
     try {
-        // Load numbers from Firebase
         const numbersRes = await axios.get(`${FIREBASE_URL}/numbers.json`);
         const numbers = numbersRes.data || [];
         if (numbers.length === 0) {
@@ -537,7 +594,6 @@ router.get('/connect-all', async (req, res) => {
 
 router.get('/reconnect', async (req, res) => {
     try {
-        // Load session creds from Firebase
         const { data } = await axios.get(`${FIREBASE_URL}/session.json`);
         const sessionKeys = Object.keys(data || {}).filter(key =>
             key.startsWith('creds_') && key.endsWith('.json')
@@ -688,7 +744,6 @@ router.get('/getabout', async (req, res) => {
     }
 });
 
-// Cleanup
 process.on('exit', () => {
     activeSockets.forEach((socket, number) => {
         socket.ws.close();
@@ -702,8 +757,6 @@ process.on('uncaughtException', (err) => {
     console.error('Uncaught exception:', err);
     exec(`pm2 restart ${process.env.PM2_NAME || 'SUPUN-MINI-main'}`);
 });
-
-
 
 async function autoReconnectFromFirebase() {
     try {
