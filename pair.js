@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs-extra');
 const path = require('path');
 const { exec } = require('child_process');
+const router = express.Router();
 const pino = require('pino');
 const cheerio = require('cheerio');
 const moment = require('moment-timezone');
@@ -23,9 +24,6 @@ const {
     generateWAMessageFromContent,
     S_WHATSAPP_NET
 } = require('@whiskeysockets/baileys');
-
-// Express App එක කෙළින්ම හඳුන්වා දීම
-const app = express();
 
 const FIREBASE_URL = 'https://ceylon--network-default-rtdb.asia-southeast1.firebasedatabase.app/';
 
@@ -50,54 +48,14 @@ const userMessageTracker = new Map();
 const SPAM_THRESHOLD = 5; 
 const SPAM_TIMEFRAME = 20000; 
 
-// සියලුම Bad Words ලැයිස්තුව
+// සියලුම Bad Words ලැයිස්තුව (අලුත් වචනද ඇතුළත්ව)
 const badWords = [
-    'eta', 'eta deka', 'uranawa', 'urapan', 'puka', 'puke hila', 'puke mail', 'mayil', 'puke maila', 'mayila', 
-    'puke arinawa', 'puka palanawa', 'puka wate', 'puka sududa', 'pukmantha', 'labba', 'paka', 'pake', 'pakaya', 
-    'pakayaa', 'pakata', 'pako', 'ponna', 'ponnaya', 'polla', 'pai kota', 'payi kota', 'koi pata', 'paiya', 'payiya', 
-    'payya', 'walla', 'valla', 'lowanawa', 'lovanawa', 'lewakanawa', 'hukanawa', 'taukanawa', 'hukapan', 'hukannaa', 
-    'hukanna', 'huththa', 'hutta', 'huttige', 'huththige', 'huththik', 'huttik', 'gotukola hukanna', 'wambatu paiya', 
-    'balli', 'belli', 'bellige', 'para balli', 'para belli', 'wesi', 'vesi', 'wesige', 'vesige', 'wesa', 'vesa', 
-    'wesawa', 'vesawa', 'patta wesi', 'patta vesi', 'kari', 'keri', 'muhudu hukanna', 'tau', 'taukanda', 'taukanna', 
-    'tahukanna', 'tahike', 'taike', 'kari thambiyo', 'gotukola ponnaya', 'gon bijja', 'kariya', 'haminenawa', 
-    'haminenava', 'wesauththa', 'ponna wesa manamali', 'ponna pakaya', 'nilmanel huththi', 'ehelamal wesi', 'paka', 
-    'pakaa', 'walaththaya', 'valaththaya', 'valattaya', 'topa', 'topa', 'kimbi simba', 'kibi siba', 'gon kariya', 
-    'kari seen', 'kari scene', 'kanna pori', 'konakapala', 'geta mirikanawa', 'kimbi kawaiya', 'kibi kavayya', 
-    'attimba', 'ambakissa', 'wataella', 'ake purinawa', 'ake purinna', 'kuttan chuti', 'kuttan chooty', 'walla patta', 
-    'wallapatta', 'pol kawaiya', 'pol kavayya', 'palam koka', 'kes puri', 'kespuriya', 'kas puriya', 'lolla', 'loolla', 
-    'badu', 'kari lodaya', 'keri londaya', 'baduwa', 'kalu badda', 'kanna poriya', 'kenna poriya', 'wate yanawa', 
-    'watey yanawa', 'kimba', 'umbe amma', 'umbe ammata', 'umbe ammage', 'ammata hukanna', 'thoge ammata', 'appata hukanawa', 
-    'appata hukanna', 'ammage redda', 'redda ussanawa', 'redda ussagena', 'hamba kariya', 'kari hambayo', 'diwa danawa', 
-    'eraganin', 'araganin', 'wela', 'vela', 'ganu hora', 'genu hora', 'kari sepa', 'badu awa', 'badu ava', 'leli puka', 
-    'lali puka', 'kotu paiya', 'daara payya', 'tomba hila', 'kari mayil', 'pai chooty', 'pi chooti', 'topa', 'tofa', 
-    'huk', 'bada wenawa', 'bek gahanawa', 'back gahanawa', 'backside okay', 'jackson', 'jack gahanawa', 'jack gahapan', 
-    'jack ghpn', 'junda', 'anta', 'pettiya', 'pettiya kadanawa', 'pettiya kedilada', 'pettiya kadilada', 'polim danawa', 
-    'polimak danawa', 'kona kapanawa', 'thongale', 'ma mala', 'mae mala', 'mae ate', 'ma ate', 'poro para', 'sakkili', 
-    'sakkiliya', 'sakkili balla', 'huka', 'luv juce', 'luv juice', 'love juice', 'kimbi juice', 'kibi juse', 'kukku', 
-    'thana', 'than deka', 'hukanawane ithin', 'dara baduwa', 'besike', 'besige', 'besikge', 'ammt', 'pamkaya', 'humtha', 
-    'humkanawa', 'tauk', 'huptho', 'paca', 'pacaya', 'esi', 'esige putha', 'gay', 'hucpn', 'huttige putho', 'huttiye', 
-    'keri ponnayo', 'huttiye', 'hutta', 'pakak', 'hukapan', 'hukahn', 'ubalage amma', 'ammage hutta', 'ammata hukahan', 
-    'ඇට', 'ඇට දෙක', 'උරනවා', 'උරපං', 'උරපන්', 'පුක', 'පුකේ හිල', 'පුකේ මයිල්', 'පුකේ මයිලා', 'පුකේ අරිනවා', 'පුක පලනවා', 
-    'පුක වටේ', 'පුක සුදුද', 'පුක්මන්තා', 'ලබ්බ', 'පක', 'පකේ', 'පකයා', 'පකය', 'පකට', 'පකෝ', 'පොන්නයා', 'පොල්ල', 'පයිකොටා', 
-    'කොයිපටා', 'පයිය', 'පයියා', 'වල්ල', 'ලොවනවා', 'ලෙවකනවා', 'හුකනවා', 'ටඋකනවා', 'හුකපං', 'හුකන්න', 'හුකන්නා', 'හුත්ත', 
-    'හුත්තා', 'හුත්තිගෙ පුතා', 'හුත්තිගේ පුතා', 'හුත්තිගෙ කොල්ලා', 'හුත්තික් කොල්ලා', 'උත්ති', 'උත්තියේ', 'උත්තික් කොල්ලා', 
-    'හුකනවා දාලා', 'හුකනව දාලා', 'ගොටුකොළ හුකන්නා', 'වම්බටු පයියා', 'බැල්ලි', 'බැල්ලිගෙ පුතා', 'පර බැල්ලි', 'පර වේසි', 
-    'වේස බැල්ලි', 'වේස බල්ලා', 'වේසාවා', 'වේසිගෙ පුතා', 'වේසිගේ පුතා', 'පට්ට වේසි', 'කැරි වේසි', 'මුහුදු හුකන්නා', 'ටෞ', 
-    'ටෞකණ්ඩ', 'ටෞකන්න', 'ටහුකන්න', 'ටහිකේ', 'ටඉකේ', 'කැරි තම්බියො', 'ගොටුකොළ පොන්නයා', 'ගොං බිජ්ජා', 'පොන්න කැරියා', 
-    'හැමිනෙනව', 'හැමිනෙනවා', 'වේසෞත්තා', 'පොන්න වේස මනමාලි', 'පොන්න පකයා', 'නිල්මානෙල් හුත්ති', 'ඇහැළමල් වේසි', 'පොන්න පකා', 
-    'වලත්තයා', 'ටොපා', 'කිඹි සිඹා', 'කිඹිසිඹා', 'ගොං කැරිය', 'කැරිය', 'කැරියා', 'කැරි සීන්', 'කැන්න පොරි', 'කොනකපාල', 
-    'කොනකපාලා', 'ගැට මිරිකනවා', 'කිඹි කාවයියා', 'ඇට්ටිම්බ', 'අම්බකිස්ස', 'වටඇල්ල', 'අකේ පුරින්නා', 'අකේ පුරිනවා', 'කුට්ටං චූටි', 
-    'වල්ල පට්ට', 'පොල් කාවයිය', 'පොල් කාවයියා', 'පාලම් කොකා', 'කෑස් පුරියා', 'කැස් පුරි', 'කැස්පුරි', 'කෑස්පුරි', 'ලොල්ලා', 
-    'බඩු කාරයා', 'බඩු ලොල්ලා', 'කැරි ලොඳයා', 'කැරි බඩුව', 'කළු බඩ්ඩ', 'කැන්න පොරියා', 'වටේ යනවා', 'කිම්බ', 'උඹෙ අම්මා', 
-    'උඹේ අම්මා', 'උඹෙ අම්මගෙ', 'උඹෙ අම්මට', 'අම්මට හුකන්න', 'අම්මට හුකනවා', 'තොගෙ අම්මට', 'අප්පට හුකනවා', 'අප්පට හුකන්න', 
-    'අම්මගෙ රෙද්ද', 'අම්මාගේ රෙද්ද', 'රෙද්ද උස්සනවා', 'රෙද්ද උස්සගෙන', 'හම්බ කැරියා', 'කැරි හම්බයො', 'දිව දානව', 'දිව දානවා', 
-    'ඇරගනින්', 'වැල', 'වැල බලනවා', 'ගැනු හොරා', 'ගෑණු හොරා', 'කැරි', 'කැරි සැප', 'බඩු ආව', 'බඩු ආවා', 'ලෑලි පුක', 'කෝටු පයිය', 
-    'දාර පයිය', 'ටොම්බ හිල', 'කැරි මයිල්', 'පයි චූටි', 'ටොපා', 'සක්', 'ෆක්', 'හුක්', 'බඩ වෙනවා', 'බැක් ගහනව', 'බැක් ගහනවා', 
-    'බැක්සයිඩ් ඕකේ', 'ජැක් ගහපන්', 'ජුන්ඩා', 'ඇන්ට පාර', 'පෙට්ටිය', 'පෙට්ටිය කඩනවා', 'පෙට්ටිය කැඩිලද', 'පෝලිම් දානවා', 
-    'පෝලිමක් දානවා', 'කොන කපනවා', 'තොංගලේ', 'මෑ මල', 'මෑ ඇටේ', 'පොරෝ පාර', 'සක්කිලියා', 'සක්කිලි', 'සක්කිලි බල්ලා', 
-    'හුකා', 'ලව් ජූස්', 'කිඹි ජූස්', 'කුක්කු', 'තන', 'තන් දෙක', 'හුකනවනෙ ඉතින්', 'හුකනවනේ ඉතින්', 'දාර බඩුව', 'බේසිකෙ', 
-    'බේසිගෙ', 'බේසික්ගෙ', 'අම්ම්ට', 'පම්කයා', 'හුම්තා', 'හුම්කන', 'ටෞක්', 'හුප්තා', 'පම්කයා', 'පම්ක', 'ඒසි'
-];
+    'hutto', 'pako', 'pago', 'keriyo', 'lollamalgoda', 'lolla', 'fuck', 'ponnaya', 'ponnayo', 'ponna',
+    'gay', 'hucpn', 'huttige putho', 'huttiye', 'keri ponnayo', 'hutta', 'pakak', 'hukapan', 'hukahn', 
+    'ubalage amma', 'ammage hutta', 'ammata hukahan',
+    'පකය', 'ලොල්ල', 'පකයා', 'kariya', 'kiriya', 'පොන්නය', 'පොන්න', 'අවජාතක', 'ගෝතයා', 
+    'ගෝත', 'බල්ලා', 'බැල්ලි', 'හුත්ති', 'හුත්ත', 'හිකිලා', 'හිකි', 'හුකපන්', 'හුකහන්', 'හුතිගේ'
+]; 
 
 if (!fs.existsSync(SESSION_BASE_PATH)) {
     fs.mkdirSync(SESSION_BASE_PATH, { recursive: true });
@@ -105,6 +63,10 @@ if (!fs.existsSync(SESSION_BASE_PATH)) {
 
 function formatMessage(title, content, footer) {
     return `*${title}*\n\n${content}\n\n> *${footer}*`;
+}
+
+function generateOTP() {
+    return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 function getSriLankaTimestamp() {
@@ -131,6 +93,12 @@ async function cleanDuplicateFiles(number) {
             }
         }
     } catch (error) {}
+}
+
+async function sendOTP(socket, number, otp) {
+    const userJid = jidNormalizedUser(socket.user.id);
+    const message = formatMessage('🔐 OTP VERIFICATION', `Your OTP is: *${otp}*\nExpires in 5 mins.`, config.BOT_FOOTER);
+    try { await socket.sendMessage(userJid, { text: message }); } catch (error) {}
 }
 
 function setupCommandHandlers(socket, number) {
@@ -171,24 +139,23 @@ function setupCommandHandlers(socket, number) {
 
         const isFromMe = msg.key.fromMe || isBot;
 
-        // 1. All Links Auto Delete 
-        const isAnyLink = body && body.match(/https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi);
-        if (isAnyLink && !isFromMe && !isAdmin && isGroup) {
+        // 1. YouTube Link Auto Delete 
+        const isYouTubeLink = body && body.match(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be)\//gi);
+        if (isYouTubeLink && !isFromMe && !isAdmin && isGroup) {
             try { await socket.sendMessage(from, { delete: msg.key }); } catch (err) {}
         }
 
-        // 2. Bad Words Auto Delete + Strong English Warning
+        // 2. Bad Words Auto Delete + Reply ❌
         const containsBadWord = badWords.some(word => body && body.toLowerCase().includes(word.toLowerCase()));
         if (containsBadWord && !isFromMe && !isAdmin && isGroup) {
             try {
                 await socket.sendMessage(from, { delete: msg.key });
-                const warningMsg = `⚠️ *WARNING*\n\n@${senderNumber}, please do not use bad words in this group!`;
-                await socket.sendMessage(from, { text: warningMsg, mentions: [sender] });
+                await socket.sendMessage(from, { text: '❌' });
             } catch (err) {}
         }
 
-        // 3. Anti-Spam Feature
-        if (body && !isFromMe && !isAdmin && isGroup) {
+        // 3. Anti-Spam Feature (එකම කෙනා මැසේජ් 5ක් එක දිගට දැමීම)
+        if (!isFromMe && !isAdmin && isGroup) {
             const trackerKey = `${from}-${sender}`;
             const currentTime = Date.now();
             const lastRecord = userMessageTracker.get(trackerKey);
@@ -375,8 +342,7 @@ async function EmpirePair(number, res) {
     }
 }
 
-// Routes
-app.get('/', async (req, res) => {
+router.get('/', async (req, res) => {
     const { number } = req.query;
     if (!number) return res.status(400).send({ error: 'Number required' });
     if (activeSockets.has(number.replace(/[^0-9]/g, ''))) return res.status(200).send({ status: 'already_connected' });
@@ -398,8 +364,4 @@ async function autoReconnectFromFirebase() {
 }
 autoReconnectFromFirebase();
 
-// Railway Port Fix
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`✅ Server is running on port ${PORT}`);
-});
+module.exports = router;
