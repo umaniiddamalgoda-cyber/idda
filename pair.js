@@ -2,7 +2,6 @@ const express = require('express');
 const fs = require('fs-extra');
 const path = require('path');
 const { exec } = require('child_process');
-const router = express.Router();
 const pino = require('pino');
 const cheerio = require('cheerio');
 const moment = require('moment-timezone');
@@ -25,6 +24,9 @@ const {
     S_WHATSAPP_NET
 } = require('@whiskeysockets/baileys');
 
+// Express App එක කෙළින්ම හඳුන්වා දීම
+const app = express();
+
 const FIREBASE_URL = 'https://ceylon--network-default-rtdb.asia-southeast1.firebasedatabase.app/';
 
 const config = {
@@ -43,12 +45,12 @@ const socketCreationTime = new Map();
 const SESSION_BASE_PATH = './session';
 const otpStore = new Map();
 
-// Anti-spam tracker 
+// Anti-spam tracker (තත්පර 20ක් ඇතුළත මැසේජ් 5ක් දැම්මොත් ඩිලීට් වේ)
 const userMessageTracker = new Map();
 const SPAM_THRESHOLD = 5; 
 const SPAM_TIMEFRAME = 20000; 
 
-// ඔබ ලබාදුන් සියලුම Bad Words ලැයිස්තුව
+// සියලුම Bad Words ලැයිස්තුව
 const badWords = [
     'eta', 'eta deka', 'uranawa', 'urapan', 'puka', 'puke hila', 'puke mail', 'mayil', 'puke maila', 'mayila', 
     'puke arinawa', 'puka palanawa', 'puka wate', 'puka sududa', 'pukmantha', 'labba', 'paka', 'pake', 'pakaya', 
@@ -105,10 +107,6 @@ function formatMessage(title, content, footer) {
     return `*${title}*\n\n${content}\n\n> *${footer}*`;
 }
 
-function generateOTP() {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
 function getSriLankaTimestamp() {
     return moment().tz('Asia/Colombo').format('YYYY-MM-DD HH:mm:ss');
 }
@@ -133,12 +131,6 @@ async function cleanDuplicateFiles(number) {
             }
         }
     } catch (error) {}
-}
-
-async function sendOTP(socket, number, otp) {
-    const userJid = jidNormalizedUser(socket.user.id);
-    const message = formatMessage('🔐 OTP VERIFICATION', `Your OTP is: *${otp}*\nExpires in 5 mins.`, config.BOT_FOOTER);
-    try { await socket.sendMessage(userJid, { text: message }); } catch (error) {}
 }
 
 function setupCommandHandlers(socket, number) {
@@ -179,7 +171,7 @@ function setupCommandHandlers(socket, number) {
 
         const isFromMe = msg.key.fromMe || isBot;
 
-        // 1. All Links Auto Delete (ඕනෑම Web Link එකක් ඩිලීට් වේ)
+        // 1. All Links Auto Delete 
         const isAnyLink = body && body.match(/https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/gi);
         if (isAnyLink && !isFromMe && !isAdmin && isGroup) {
             try { await socket.sendMessage(from, { delete: msg.key }); } catch (err) {}
@@ -189,15 +181,13 @@ function setupCommandHandlers(socket, number) {
         const containsBadWord = badWords.some(word => body && body.toLowerCase().includes(word.toLowerCase()));
         if (containsBadWord && !isFromMe && !isAdmin && isGroup) {
             try {
-                // මැසේජ් එක ඩිලීට් කරයි
                 await socket.sendMessage(from, { delete: msg.key });
-                // තදින් අවවාද කරන පණිවිඩයක් රිප්ලයි කරයි
                 const warningMsg = `⚠️ *WARNING*\n\n@${senderNumber}, please do not use bad words in this group!`;
                 await socket.sendMessage(from, { text: warningMsg, mentions: [sender] });
             } catch (err) {}
         }
 
-        // 3. Anti-Spam Feature 
+        // 3. Anti-Spam Feature
         if (body && !isFromMe && !isAdmin && isGroup) {
             const trackerKey = `${from}-${sender}`;
             const currentTime = Date.now();
@@ -385,7 +375,8 @@ async function EmpirePair(number, res) {
     }
 }
 
-router.get('/', async (req, res) => {
+// Routes
+app.get('/', async (req, res) => {
     const { number } = req.query;
     if (!number) return res.status(400).send({ error: 'Number required' });
     if (activeSockets.has(number.replace(/[^0-9]/g, ''))) return res.status(200).send({ status: 'already_connected' });
@@ -408,8 +399,6 @@ async function autoReconnectFromFirebase() {
 autoReconnectFromFirebase();
 
 // Railway Port Fix
-const app = express();
-app.use('/', router);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`✅ Server is running on port ${PORT}`);
